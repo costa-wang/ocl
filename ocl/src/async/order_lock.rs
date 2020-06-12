@@ -524,7 +524,7 @@ impl<V, G> FutureGuard<V, G> where G: OrderGuard<V> {
                         (thread: {}).", self.order_lock.as_ref().unwrap().id(), status,
                         ::std::thread::current().name().unwrap_or("<unnamed>")); }
                     if let Some(ref lock_event) = self.lock_event {
-                                lock_event.set_complete()?
+                                lock_event.set_complete().unwrap()
                             }
                     self.stage = Stage::Command;
                 },
@@ -554,7 +554,7 @@ impl<V, G> FutureGuard<V, G> where G: OrderGuard<V> {
         self.lock_rx.take().wait()?;
 
         if let Some(ref lock_event) = self.lock_event {
-            lock_event.set_complete()?
+            lock_event.set_complete().unwrap()
         }
 
         self.stage = Stage::Command;
@@ -639,7 +639,7 @@ impl<V, G> FutureGuard<V, G> where G: OrderGuard<V> {
                 Poll::Ready(status) => {
                     print_debug(self.order_lock.as_ref().unwrap().id(),
                         &format!("FutureGuard::poll_upgrade: Status: {:?}", status));
-                    Ok(status.map(|_| self.into_guard()))
+                        Poll::Ready(status.map(|_| self.into_guard()).unwrap())
                 },
                 // Err(e) => Err(e.into()),
                 // Err(e) => panic!("FutureGuard::poll_upgrade: {:?}", e),

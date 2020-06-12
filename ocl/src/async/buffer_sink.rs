@@ -32,7 +32,16 @@ impl<T: OclPrm> Future for FutureFlush<T> {
 
     #[inline]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        self.future_guard.poll().map(|res| res.map(|_read_guard| ()))
+        match Pin::new(&mut self.future_guard).poll(cx){
+            Poll::Ready(res) => {
+                //return Poll::Ready(res.map(|res| res.map(|_write_guard| ())).unwrap());
+                return Poll::Ready(());
+            }
+            Poll::Pending => {
+                return Poll::Pending;
+            }
+        }
+        // self.future_guard.poll().map(|res| res.map(|_read_guard| ()))
     }
 }
 

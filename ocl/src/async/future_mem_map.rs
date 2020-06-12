@@ -146,7 +146,7 @@ impl<T> Future for FutureMemMap<T> where T: OclPrm + 'static {
         // println!("Polling FutureMemMap...");
         match self.map_event.is_complete() {
             Ok(true) => {
-                self.to_mapped_mem().map(|mm| Poll::Ready(mm))
+                self.to_mapped_mem().map(|mm| Poll::Ready(mm)).unwrap()
             }
             Ok(false) => {
                 if !self.callback_is_set {
@@ -154,8 +154,7 @@ impl<T> Future for FutureMemMap<T> where T: OclPrm + 'static {
                     self.callback_is_set = true;
                 }
                 Poll::Pending
-            },
-            Err(err) => Err(err.into()),
+            }
         }
     }
 }
