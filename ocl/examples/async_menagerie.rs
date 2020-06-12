@@ -18,7 +18,7 @@ extern crate ocl_extras as extras;
 use rand::{Rng, XorShiftRng};
 use rand::distributions::{IndependentSample, Range as RandRange};
 use futures::{stream, Future, Sink, Stream, Join};
-use futures::sync::mpsc::{self, Sender};
+use futures::channel::mpsc::{self, Sender};
 use futures_cpupool::{CpuPool, CpuFuture};
 use ocl::{Result as OclResult, Platform, Device, Context, Queue, Program, Kernel, OclPrm,
     Event, EventList, FutureMemMap};

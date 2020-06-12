@@ -3,11 +3,12 @@
 #![allow(unused_imports, dead_code)]
 
 use std::ops::{Deref, DerefMut};
-use futures::{Future, Poll, Async};
+use std::{pin::Pin, task::Context, task::Poll};
+use futures::{Future};
 use core::{self, OclPrm, Mem as MemCore, MemMap as MemMapCore,
     MemFlags, MapFlags, ClNullEventPtr, ClWaitListPtr, AsMem};
 use standard::{Event, EventList, Queue, Buffer, ClWaitListPtrEnum, ClNullEventPtrEnum};
-use async::{Error as OclError, Result as OclResult};
+use crate::error::{Error as OclError, Result as OclResult};
 
 
 
@@ -206,32 +207,30 @@ impl<T: OclPrm> FutureSinkMapGuard<T> {
 }
 
 // impl<T: OclPrm> Future for FutureSinkMapGuard<T> {
-//     type Item = ();
-//     type Error = OclError;
+//     type Output = ();
 
 //     #[inline]
-//     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+//     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
 //         self.future_guard.poll().map(|res| res.map(|_read_guard| ()))
 //     }
 // }
 
 #[cfg(not(feature = "async_block"))]
-impl<T> Future for FutureSinkMapGuard<T> where T: OclPrm + 'static {
-    type Item = SinkMapGuard<T>;
-    type Error = OclError;
+impl<T> Future for FutureSinkMapGuard<T> where T: OclPrm {
+    type Output = SinkMapGuard<T>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         // println!("Polling FutureSinkMapGuard...");
         match self.map_event.is_complete() {
             Ok(true) => {
-                self.resolve().map(|mm| Async::Ready(mm))
+                self.resolve().map(|mm| Poll::Ready(mm))
             }
             Ok(false) => {
                 if !self.callback_is_set {
                     self.map_event.set_unpark_callback()?;
                     self.callback_is_set = true;
                 }
-                Ok(Async::NotReady)
+                Ok(Poll::Pending)
             },
             Err(err) => Err(err.into()),
         }
@@ -241,14 +240,13 @@ impl<T> Future for FutureSinkMapGuard<T> where T: OclPrm + 'static {
 /// Blocking implementation.
 #[cfg(feature = "async_block")]
 impl<T: OclPrm> Future for FutureSinkMapGuard<T> {
-    type Item = SinkMapGuard<T>;
-    type Error = OclError;
+    type Output = SinkMapGuard<T>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         // println!("Polling FutureSinkMapGuard...");
         let _ = self.callback_is_set;
         self.map_event.wait_for()?;
-        self.resolve().map(|mm| Async::Ready(mm))
+        self.resolve().map(|mm| Poll::Ready(mm))
     }
 }
 

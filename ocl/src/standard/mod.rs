@@ -66,7 +66,7 @@ impl<'a, T> HostSlice<'a, T> where T: 'a {
 mod cb {
     use crate::core::ffi::c_void;
     use num_traits::FromPrimitive;
-    use futures::task::Task;
+    use futures_01::task::Task;
     use crate::ffi::cl_event;
     use crate::core::{CommandExecutionStatus, Status};
 

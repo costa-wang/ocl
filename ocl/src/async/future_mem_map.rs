@@ -1,6 +1,8 @@
 // use std::sync::Arc;
 // use std::sync::atomic::AtomicBool;
-use futures::{Future, Poll, Async};
+
+use std::{pin::Pin, task::Context, task::Poll};
+use futures::{Future};
 use crate::core::{OclPrm, MemMap as MemMapCore, Mem, ClNullEventPtr};
 use crate::r#async::MemMap;
 use crate::error::{Error as OclError, Result as OclResult};
@@ -118,9 +120,9 @@ impl<T: OclPrm> FutureMemMap<T> {
 
     /// Blocks the current thread until the OpenCL command is complete and an
     /// appropriate lock can be obtained on the underlying data.
-    pub fn wait(self) -> OclResult<MemMap<T>> {
-        <Self as Future>::wait(self)
-    }
+    // pub fn wait(self) -> OclResult<MemMap<T>> {
+    //     <Self as Future>::wait(self)
+    // }
 
     /// Resolves this `FutureMemMap` into a `MemMap`.
     fn to_mapped_mem(&mut self) -> OclResult<MemMap<T>> {
@@ -138,22 +140,20 @@ impl<T: OclPrm> FutureMemMap<T> {
 
 #[cfg(not(feature = "async_block"))]
 impl<T> Future for FutureMemMap<T> where T: OclPrm + 'static {
-    type Item = MemMap<T>;
-    type Error = OclError;
+    type Output = MemMap<T>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         // println!("Polling FutureMemMap...");
         match self.map_event.is_complete() {
             Ok(true) => {
-                self.to_mapped_mem().map(|mm| Async::Ready(mm))
+                self.to_mapped_mem().map(|mm| Poll::Ready(mm))
             }
             Ok(false) => {
                 if !self.callback_is_set {
-                    self.map_event.set_unpark_callback()?;
+                    self.map_event.set_unpark_callback();
                     self.callback_is_set = true;
                 }
-
-                Ok(Async::NotReady)
+                Poll::Pending
             },
             Err(err) => Err(err.into()),
         }
@@ -163,14 +163,13 @@ impl<T> Future for FutureMemMap<T> where T: OclPrm + 'static {
 /// Blocking implementation.
 #[cfg(feature = "async_block")]
 impl<T: OclPrm> Future for FutureMemMap<T> {
-    type Item = MemMap<T>;
-    type Error = OclError;
+    type Output = MemMap<T>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         // println!("Polling FutureMemMap...");
         let _ = self.callback_is_set;
         self.map_event.wait_for()?;
-        self.to_mapped_mem().map(|mm| Async::Ready(mm))
+        self.to_mapped_mem().map(|mm| Poll::Ready(mm))
     }
 }
 

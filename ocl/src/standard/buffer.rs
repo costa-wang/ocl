@@ -840,7 +840,7 @@ impl<'c, 'd, T> BufferReadCmd<'c, 'd, T> where T: OclPrm {
     /// running the command (which will also block for its duration).
     //
     // NOTE: Could use deferred initialization for the guard slice instead of closure.
-    pub fn enq(mut self) -> OclResult<()> {
+    pub async fn enq(mut self) -> OclResult<()> {
         let read_dst = self.dst.take();
         let range = self.range.clone();
         if range.end > read_dst.len() { return Err(OclError::from(
@@ -886,13 +886,13 @@ impl<'c, 'd, T> BufferReadCmd<'c, 'd, T> where T: OclPrm {
                 enqueue_with_data(&mut slice[range])
             },
             ReadDst::RwVec(rw_vec) => {
-                let mut guard = rw_vec.write().wait()
-                    .map_err(|_| OclError::from("Unable to obtain lock."))?;
+                let mut guard = rw_vec.write().await;
+                    //.map_err(|_| OclError::from("Unable to obtain lock."))?;
                 enqueue_with_data(&mut guard.as_mut_slice()[range])
             },
             ReadDst::Writer(writer) => {
-                let mut guard = writer.wait()
-                    .map_err(|_| OclError::from("Unable to obtain lock."))?;
+                let mut guard = writer.await;
+                    //.map_err(|_| OclError::from("Unable to obtain lock."))?;
                 enqueue_with_data(&mut guard.as_mut_slice()[range])
             }
             ReadDst::None => panic!("Invalid read destination."),
@@ -906,7 +906,7 @@ impl<'c, 'd, T> BufferReadCmd<'c, 'd, T> where T: OclPrm {
     /// A data destination container appropriate for an asynchronous operation
     /// (such as `RwVec`) must have been passed to `::read`.
     ///
-    pub fn enq_async(mut self) -> OclResult<FutureWriteGuard<Vec<T>>> {
+    pub  fn enq_async(mut self) -> OclResult<FutureWriteGuard<Vec<T>>> {
         let queue = match self.cmd.queue {
             Some(q) => q,
             None => return Err("BufferCmd::enq: No queue set.".into()),
@@ -1219,7 +1219,7 @@ impl<'c, 'd, T> BufferWriteCmd<'c, 'd, T> where T: OclPrm {
     /// running the command (which will also block).
     //
     // NOTE: Could use deferred initialization for the guard slice instead of closure.
-    pub fn enq(mut self) -> OclResult<()> {
+    pub async fn enq(mut self) -> OclResult<()> {
         let write_src = self.src.take();
         let range = self.range.clone();
         if range.end > write_src.len() { return Err(OclError::from(
@@ -1266,13 +1266,13 @@ impl<'c, 'd, T> BufferWriteCmd<'c, 'd, T> where T: OclPrm {
                 enqueue_with_data(&slice[range])
             },
             WriteSrc::RwVec(rw_vec) => {
-                let guard = rw_vec.read().wait()
-                    .map_err(|_| OclError::from("Unable to obtain lock."))?;
+                let guard = rw_vec.read().await;
+                    //.map_err(|_| OclError::from("Unable to obtain lock."))?;
                 enqueue_with_data(&guard.as_slice()[range])
             },
             WriteSrc::Reader(reader) => {
-                let guard = reader.wait()
-                    .map_err(|_| OclError::from("Unable to obtain lock."))?;
+                let guard = reader.await;
+                    //.map_err(|_| OclError::from("Unable to obtain lock."))?;
                 enqueue_with_data(&guard.as_slice()[range])
             },
             WriteSrc::None => panic!("Invalid read destination."),
@@ -2334,7 +2334,7 @@ impl<'a, T> BufferBuilder<'a, T> where T: 'a + OclPrm {
     ///
     /// Dimensions and either a context or default queue must be specified
     /// before calling `::build`.
-    pub fn build(self) -> OclResult<Buffer<T>> {
+    pub async fn build(self) -> OclResult<Buffer<T>> {
         let mut flags = match self.flags {
             Some(f) => f,
             None => MemFlags::new().read_write(),
@@ -2393,10 +2393,10 @@ impl<'a, T> BufferBuilder<'a, T> where T: 'a + OclPrm {
                     } else {
                         let fill_vec = vec![val; buf.len()];
                         match fill_event {
-                            Some(enew) => buf.cmd().write(&fill_vec).enew(enew).enq()?,
+                            Some(enew) => buf.cmd().write(&fill_vec).enew(enew).enq().await?,
                             None => {
                                 let mut new_event = Event::empty();
-                                buf.cmd().write(&fill_vec).enew(&mut new_event).enq()?;
+                                buf.cmd().write(&fill_vec).enew(&mut new_event).enq().await?;
                                 new_event.wait_for()?;
                             }
                         }

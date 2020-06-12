@@ -1,7 +1,8 @@
 //! High performance buffer writes.
 
 use std::ops::{Deref, DerefMut};
-use futures::{Future, Poll};
+use std::{pin::Pin, task::Context, task::Poll};
+use futures::{Future};
 use crate::core::{self, OclPrm, MemMap as MemMapCore,
     MemFlags, MapFlags, ClNullEventPtr};
 use crate::standard::{Event, EventList, Queue, Buffer, ClWaitListPtrEnum, ClNullEventPtrEnum};
@@ -27,11 +28,10 @@ impl<T: OclPrm> FutureFlush<T> {
 }
 
 impl<T: OclPrm> Future for FutureFlush<T> {
-    type Item = ();
-    type Error = OclError;
+    type Output = ();
 
     #[inline]
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         self.future_guard.poll().map(|res| res.map(|_read_guard| ()))
     }
 }
@@ -253,13 +253,13 @@ impl<T: OclPrm> BufferSink<T> {
     ///
     /// The current thread will be blocked while the buffer is initialized
     /// upon calling this function.
-    pub fn new(queue: Queue, len: usize) -> OclResult<BufferSink<T>> {
+    pub async fn new(queue: Queue, len: usize) -> OclResult<BufferSink<T>> {
         let buffer = Buffer::<T>::builder()
             .queue(queue.clone())
             .flags(MemFlags::new().alloc_host_ptr().host_write_only())
             .len(len)
             .fill_val(T::default())
-            .build()?;
+            .build().await?;
 
         unsafe { BufferSink::from_buffer(buffer, None, 0, len) }
     }
@@ -314,7 +314,7 @@ impl<T: OclPrm> BufferSink<T> {
     }
 
     /// Returns a new `FutureGuard` which will resolve into a a `WriteGuard`.
-    pub fn write(self) -> FutureGuard<Inner<T>, WriteGuard<Inner<T>>> {
+    pub fn write(self) -> FutureGuard<Inner<T>, WriteGuard<Inner<T>>>  {
         self.lock.write()
     }
 

@@ -1,7 +1,8 @@
 //! High performance buffer reads.
 
 use std::ops::Deref;
-use futures::{Future, Poll};
+use std::{pin::Pin, task::Context, task::Poll};
+use futures::{Future};
 use crate::core::{self, OclPrm, MemMap as MemMapCore,
     MemFlags, MapFlags, ClNullEventPtr};
 use crate::standard::{Event, EventList, Queue, Buffer, ClWaitListPtrEnum, ClNullEventPtrEnum};
@@ -27,11 +28,10 @@ impl<T: OclPrm> FutureFlood<T> {
 }
 
 impl<T: OclPrm> Future for FutureFlood<T> {
-    type Item = ();
-    type Error = OclError;
+    type Output = ();
 
     #[inline]
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         self.future_guard.poll().map(|res| res.map(|_write_guard| ()))
     }
 }
@@ -256,13 +256,13 @@ impl<T: OclPrm> BufferStream<T> {
     ///
     /// The current thread will be blocked while the buffer is initialized
     /// upon calling this function.
-    pub fn new(queue: Queue, len: usize) -> OclResult<BufferStream<T>> {
+    pub async fn new(queue: Queue, len: usize) -> OclResult<BufferStream<T>> {
         let buffer = Buffer::<T>::builder()
             .queue(queue.clone())
             .flags(MemFlags::new().alloc_host_ptr().host_read_only())
             .len(len)
             .fill_val(T::default())
-            .build()?;
+            .build().await?;
 
         unsafe { BufferStream::from_buffer(buffer, None, 0, len) }
     }

@@ -126,13 +126,13 @@ impl ProQue {
     /// If not, set them with `::set_dims`, or just create a buffer using
     /// `Buffer::builder()` instead.
     ///
-    pub fn create_buffer<T: OclPrm>(&self) -> OclResult<Buffer<T>> {
+    pub async fn create_buffer<T: OclPrm>(&self) -> OclResult<Buffer<T>> {
         let len = self.dims_result()?.to_len();
         Buffer::<T>::builder()
             .queue(self.queue.clone())
             .len(len)
             .fill_val(Default::default())
-            .build()
+            .build().await
     }
 
     /// Returns a new `BufferBuilder` with the default queue and length
