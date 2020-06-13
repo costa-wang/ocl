@@ -266,13 +266,13 @@ impl<T: OclPrm> BufferStream<T> {
     ///
     /// The current thread will be blocked while the buffer is initialized
     /// upon calling this function.
-    pub async fn new(queue: Queue, len: usize) -> OclResult<BufferStream<T>> {
+    pub fn new(queue: Queue, len: usize) -> OclResult<BufferStream<T>> {
         let buffer = Buffer::<T>::builder()
             .queue(queue.clone())
             .flags(MemFlags::new().alloc_host_ptr().host_read_only())
             .len(len)
             .fill_val(T::default())
-            .build().await?;
+            .build()?;
 
         unsafe { BufferStream::from_buffer(buffer, None, 0, len) }
     }

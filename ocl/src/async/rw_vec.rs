@@ -6,7 +6,7 @@
 //
 //
 
-
+use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
 use crate::r#async::{OrderLock, FutureGuard, ReadGuard, WriteGuard};
 use crate::r#async::qutex::QrwLock;
@@ -49,7 +49,6 @@ impl<T> RwVec<T> {
     /// Returns a new `FutureRwGuard` which will resolve into a a `RwGuard`.
     pub fn read(self) -> FutureGuard<Vec<T>, ReadGuard<Vec<T>>> {
         self.lock.read()
-
     }
 
     /// Returns a new `FutureRwGuard` which will resolve into a a `RwGuard`.

@@ -3,10 +3,12 @@
 use std;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut, Range};
+use futures::executor::block_on;
+use futures::{prelude::*, pin_mut};
 use crate::core::{self, Error as OclCoreError, Result as OclCoreResult, OclPrm, Mem as MemCore,
     MemFlags, MemInfo, MemInfoResult, BufferRegion, MapFlags, AsMem, MemCmdRw, MemCmdAll,
     ClNullEventPtr};
-use crate::{Context, Queue, FutureMemMap, MemMap, Event, RwVec, FutureReadGuard, FutureWriteGuard,
+use crate::{Context, Queue, FutureMemMap, MemMap, Event, RwVec, ReadGuard, FutureReadGuard, FutureWriteGuard,
     SpatialDims};
 use crate::standard::{ClNullEventPtrEnum, ClWaitListPtrEnum, HostSlice};
 use crate::error::{Error as OclError, Result as OclResult};
@@ -840,7 +842,7 @@ impl<'c, 'd, T> BufferReadCmd<'c, 'd, T> where T: OclPrm {
     /// running the command (which will also block for its duration).
     //
     // NOTE: Could use deferred initialization for the guard slice instead of closure.
-    pub async fn enq(mut self) -> OclResult<()> {
+    pub fn enq(mut self) -> OclResult<()> {
         let read_dst = self.dst.take();
         let range = self.range.clone();
         if range.end > read_dst.len() { return Err(OclError::from(
@@ -886,12 +888,29 @@ impl<'c, 'd, T> BufferReadCmd<'c, 'd, T> where T: OclPrm {
                 enqueue_with_data(&mut slice[range])
             },
             ReadDst::RwVec(rw_vec) => {
-                let mut guard = rw_vec.write().await;
-                    //.map_err(|_| OclError::from("Unable to obtain lock."))?;
+                let mut guard = block_on(async {
+                    loop {
+                        return rw_vec.read().await;
+                        }
+                    });
+                
+                //  let mut guard_ptr =  unsafe { *guard.as_mut_ptr() };
+
+                 // let this = &mut *self;
+
+                // let mut guard = refcell_guard.borrow_mut();
+                
+                // let guard_ptr = &mut guard as *mut ReadGuard<Vec<T>>;
+
                 enqueue_with_data(&mut guard.as_mut_slice()[range])
             },
             ReadDst::Writer(writer) => {
-                let mut guard = writer.await;
+                let mut guard = block_on(async {
+                    loop {
+                        return writer.await;
+                        }
+                    });
+                // let mut guard = refcell_guard.borrow_mut();
                     //.map_err(|_| OclError::from("Unable to obtain lock."))?;
                 enqueue_with_data(&mut guard.as_mut_slice()[range])
             }
@@ -906,7 +925,7 @@ impl<'c, 'd, T> BufferReadCmd<'c, 'd, T> where T: OclPrm {
     /// A data destination container appropriate for an asynchronous operation
     /// (such as `RwVec`) must have been passed to `::read`.
     ///
-    pub  fn enq_async(mut self) -> OclResult<FutureWriteGuard<Vec<T>>> {
+    pub fn enq_async(mut self) -> OclResult<FutureWriteGuard<Vec<T>>> {
         let queue = match self.cmd.queue {
             Some(q) => q,
             None => return Err("BufferCmd::enq: No queue set.".into()),
@@ -1219,7 +1238,7 @@ impl<'c, 'd, T> BufferWriteCmd<'c, 'd, T> where T: OclPrm {
     /// running the command (which will also block).
     //
     // NOTE: Could use deferred initialization for the guard slice instead of closure.
-    pub async fn enq(mut self) -> OclResult<()> {
+    pub fn enq(mut self) -> OclResult<()> {
         let write_src = self.src.take();
         let range = self.range.clone();
         if range.end > write_src.len() { return Err(OclError::from(
@@ -1266,12 +1285,23 @@ impl<'c, 'd, T> BufferWriteCmd<'c, 'd, T> where T: OclPrm {
                 enqueue_with_data(&slice[range])
             },
             WriteSrc::RwVec(rw_vec) => {
-                let guard = rw_vec.read().await;
+                let guard = block_on(async {
+                    loop {
+                         return rw_vec.read().await;
+                        }
+                    });
+                // let guard = refcell_guard.borrow();
                     //.map_err(|_| OclError::from("Unable to obtain lock."))?;
                 enqueue_with_data(&guard.as_slice()[range])
             },
             WriteSrc::Reader(reader) => {
-                let guard = reader.await;
+                let guard = block_on(async {
+                    loop {
+                        return reader.await;
+                        }
+                    });
+                
+                // let guard = refcell_guard.borrow();
                     //.map_err(|_| OclError::from("Unable to obtain lock."))?;
                 enqueue_with_data(&guard.as_slice()[range])
             },
@@ -2334,7 +2364,7 @@ impl<'a, T> BufferBuilder<'a, T> where T: 'a + OclPrm {
     ///
     /// Dimensions and either a context or default queue must be specified
     /// before calling `::build`.
-    pub async fn build(self) -> OclResult<Buffer<T>> {
+    pub fn build(self) -> OclResult<Buffer<T>> {
         let mut flags = match self.flags {
             Some(f) => f,
             None => MemFlags::new().read_write(),
@@ -2393,10 +2423,10 @@ impl<'a, T> BufferBuilder<'a, T> where T: 'a + OclPrm {
                     } else {
                         let fill_vec = vec![val; buf.len()];
                         match fill_event {
-                            Some(enew) => buf.cmd().write(&fill_vec).enew(enew).enq().await?,
+                            Some(enew) => buf.cmd().write(&fill_vec).enew(enew).enq()?,
                             None => {
                                 let mut new_event = Event::empty();
-                                buf.cmd().write(&fill_vec).enew(&mut new_event).enq().await?;
+                                buf.cmd().write(&fill_vec).enew(&mut new_event).enq()?;
                                 new_event.wait_for()?;
                             }
                         }

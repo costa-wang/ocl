@@ -9,6 +9,7 @@
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::{pin::Pin, task::Context, task::Poll};
+use std::cell::RefCell;
 use futures::{Future};
 use futures::channel::oneshot::{self, Receiver};
 use crate::core::{ClContextPtr, ClNullEventPtr};
@@ -159,6 +160,8 @@ impl<V> OrderGuard<V> for ReadGuard<V> {
     }
 }
 
+// impl<V> Unpin for ReadGuard<V> {}
+
 
 /// Allows access to the data contained within just like a mutex guard.
 #[derive(Debug)]
@@ -280,7 +283,6 @@ pub struct FutureGuard<V, G> where G: OrderGuard<V> {
     upgrade_rx: Option<Receiver<()>>,
     release_event: Option<Event>,
     stage: Stage,
-    // cx: &'a mut Context,
     _guard: PhantomData<G>,
 }
 
@@ -671,7 +673,6 @@ impl<V, G> FutureGuard<V, G> where G: OrderGuard<V> {
 
 impl<V, G> Unpin for FutureGuard<V, G> where G: OrderGuard<V> {}
 
-
 impl<V, G> Future for FutureGuard<V, G> where G: OrderGuard<V> {
     type Output = G;
 
@@ -681,104 +682,71 @@ impl<V, G> Future for FutureGuard<V, G> where G: OrderGuard<V> {
         if this.order_lock.is_some() {
             match this.stage {
                 Stage::WaitEvents => { 
-                    match this.poll_wait_events(cx){
-                    Poll::Ready(res) =>{
-                        return Poll::Ready(res);
-                    },
-                    Poll::Pending =>{
-                        return Poll::Pending;
-                    }
-                    }
+                   this.poll_wait_events(cx)
                 },
                 Stage::LockQueue => {
-                    match this.poll_lock(cx) {
-                        Poll::Ready(res) =>{
-                            return Poll::Ready(res);
-                        },
-                        Poll::Pending =>{
-                            return Poll::Pending;
-                        }
-                    }
+                    this.poll_lock(cx)
                 },
                 Stage::Command => {
-                    match this.poll_command(cx){
-                        Poll::Ready(res) =>{
-                            return Poll::Ready(res);
-                        },
-                        Poll::Pending =>{
-                            return Poll::Pending;
-                        }
-                    }
+                   this.poll_command(cx)
                 },
                 Stage::Upgrade => {
-                    match this.poll_upgrade(cx){
-                        Poll::Ready(res) =>{
-                            return Poll::Ready(res);
-                        },
-                        Poll::Pending =>{
-                            return Poll::Pending;
-                        }
-                    }
+                    this.poll_upgrade(cx)
                 }
             }
         } else {
-            panic!("FutureGuard::poll: Task already completed.")
+            panic!("FutureGuard::poll: OrderLock is not locked.")
         }
     }
 }
 
-// impl<V, G> Drop for FutureGuard<V, G> where G: OrderGuard<V> {
-//     /// Drops this FutureGuard.
-//     ///
-//     /// Blocks the current thread until the command associated with this
-//     /// `FutureGuard` (represented by the command completion event)
-//     /// completes. This ensures that the underlying value is not dropped
-//     /// before the command completes (which would cause obvious problems).
-//     ///
-//     /// ## `future_guard_drop_panic` Feature
-//     ///
-//     /// If the `future_guard_drop_panic` feature is enabled, dropping a
-//     /// `FutureGuard` before it is polled will cause a panic.
-//     ///
-//     fn drop(&mut self) {
-//         if cfg!(feature = "future_guard_drop_panic") {
-//             if let Some(ref _order_lock) = self.order_lock {
-//                 panic!("FutureGuard dropped before being polled. Not polling a FutureGuard \
-//                     can cause deadlocks. Call '.wait()' before dropping if necessary.");
-//             }
-//         }
-//         if let Some(ref mut lock_rx) = self.lock_rx {
-//             lock_rx.close();
+impl<V, G> Drop for FutureGuard<V, G> where G: OrderGuard<V> {
+    /// Drops this FutureGuard.
+    ///
+    /// Blocks the current thread until the command associated with this
+    /// `FutureGuard` (represented by the command completion event)
+    /// completes. This ensures that the underlying value is not dropped
+    /// before the command completes (which would cause obvious problems).
+    ///
+    /// ## `future_guard_drop_panic` Feature
+    ///
+    /// If the `future_guard_drop_panic` feature is enabled, dropping a
+    /// `FutureGuard` before it is polled will cause a panic.
+    ///
+    fn drop(&mut self) {
+        if cfg!(feature = "future_guard_drop_panic") {
+            if let Some(ref _order_lock) = self.order_lock {
+                panic!("FutureGuard dropped before being polled. Not polling a FutureGuard \
+                    can cause deadlocks. Call '.wait()' before dropping if necessary.");
+            }
+        }
+        if let Some(ref mut lock_rx) = self.lock_rx {
+            lock_rx.close();
+            match lock_rx.try_recv() {
+                Ok(status) => {
+                            if let Some(ref lock_event) = self.lock_event {
+                                lock_event.set_complete().ok();
+                            }
+                            // Drop and release lock.
+                            let _guard = G::new(self.order_lock.take().unwrap(),
+                                self.release_event.take());
+                },
+                Err(_) => (),
+                }
+        }
 
-//             match lock_rx.recv() {
-//                 Ok(status) => {
-//                     match status {
-//                         Poll::Ready(_) => {
-//                             if let Some(ref lock_event) = self.lock_event {
-//                                 lock_event.set_complete().ok();
-//                             }
-//                             // Drop and release lock.
-//                             let _guard = G::new(self.order_lock.take().unwrap(),
-//                                 self.release_event.take());
-//                         },
-//                         Poll::Pending => (),
-//                     }
-//                 },
-//                 Err(_) => (),
-//             }
-//         }
-//         if let Some(ref ccev) = self.command_event {
-//             // println!("###### FutureGuard::drop: Event ({:?}) incomplete...", ccev);
-//             // panic!("FutureGuard::drop: FutureGuard dropped before being polled.");
-//             ccev.wait_for().expect("Error waiting on command completion event \
-//                 while dropping 'FutureGuard'");
-//         }
-//         if let Some(ref rev) = self.release_event {
-//             rev.set_complete().expect("Error setting release event complete \
-//                 while dropping 'FutureGuard'");
-//         }
-//     }
-// }
+        if let Some(ref ccev) = self.command_event {
+            // println!("###### FutureGuard::drop: Event ({:?}) incomplete...", ccev);
+            // panic!("FutureGuard::drop: FutureGuard dropped before being polled.");
+            ccev.wait_for().expect("Error waiting on command completion event \
+                while dropping 'FutureGuard'");
+        }
+        if let Some(ref rev) = self.release_event {
+            rev.set_complete().expect("Error setting release event complete \
+                while dropping 'FutureGuard'");
+        }
+    }
+}
 
 // a.k.a. FutureRead<V>
 impl<V> FutureGuard<V, ReadGuard<V>> {

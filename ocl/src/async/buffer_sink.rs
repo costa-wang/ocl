@@ -262,13 +262,13 @@ impl<T: OclPrm> BufferSink<T> {
     ///
     /// The current thread will be blocked while the buffer is initialized
     /// upon calling this function.
-    pub async fn new(queue: Queue, len: usize) -> OclResult<BufferSink<T>> {
+    pub fn new(queue: Queue, len: usize) -> OclResult<BufferSink<T>> {
         let buffer = Buffer::<T>::builder()
             .queue(queue.clone())
             .flags(MemFlags::new().alloc_host_ptr().host_write_only())
             .len(len)
             .fill_val(T::default())
-            .build().await?;
+            .build()?;
 
         unsafe { BufferSink::from_buffer(buffer, None, 0, len) }
     }
