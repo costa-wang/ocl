@@ -155,6 +155,9 @@ impl<T> Future for FutureMemMap<T> where T: OclPrm + 'static {
                 }
                 Poll::Pending
             }
+            _ => {
+                panic!("FutureMemMap::poll: Task already completed.");
+            }
         }
     }
 }

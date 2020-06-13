@@ -482,30 +482,30 @@ impl<V, G> FutureGuard<V, G> where G: OrderGuard<V> {
 
     /// Polls the wait events until all requisite commands have completed then
     /// polls the lock queue.
-    fn poll_wait_events(&mut self, cx: &mut Context) -> OclResult<Poll<G>> {
+    fn poll_wait_events(&mut self, cx: &mut Context) ->Poll<G> {
         debug_assert!(self.stage == Stage::WaitEvents);
         print_debug(self.order_lock.as_ref().unwrap().id(), "FutureGuard::poll_wait_events: Called");
 
         // Check completion of wait list, if it exists:
-        if let Some(ref mut wait_events) = self.wait_events {
             // if PRINT_DEBUG { println!("###### [{}] FutureGuard::poll_wait_events: \
             //     Polling wait_events (thread: {})...", self.order_lock.as_ref().unwrap().id(),
             //     ::std::thread::current().name().unwrap_or("<unnamed>")); }
 
-            if let Poll::Pending = Pin::new(&mut wait_events).poll(cx) {
-                return Ok(Poll::Pending);
+            match Pin::new(&mut self.wait_events.take().unwrap()).poll(cx) {
+                Poll::Ready(_) => {
+                    return Poll::Ready(self.into_guard());
+                },
+                Poll::Pending => {
+                    self.stage = Stage::LockQueue;
+                    self.poll_lock(cx)
+                }
             }
-
-        }
-
-        self.stage = Stage::LockQueue;
-        self.poll_lock(cx)
     }
 
     /// Polls the lock until we have obtained a lock then polls the command
     /// event.
     #[cfg(not(feature = "async_block"))]
-    fn poll_lock(&mut self, cx: &mut Context) -> OclResult<Poll<G>> {
+    fn poll_lock(&mut self, cx: &mut Context) -> Poll<G> {
         debug_assert!(self.stage == Stage::LockQueue);
         print_debug(self.order_lock.as_ref().unwrap().id(), "FutureGuard::poll_lock: Called");
 
@@ -513,8 +513,7 @@ impl<V, G> FutureGuard<V, G> where G: OrderGuard<V> {
         unsafe { self.order_lock.as_ref().unwrap().lock.process_queues(); }
 
         // Check for completion of the lock rx:
-        if let Some(ref mut lock_rx) = self.lock_rx {
-            match Pin::new(&mut lock_rx).poll(cx) {
+            match Pin::new(&mut self.lock_rx.take().unwrap()).poll(cx) {
                 // If the poll returns `Poll::Ready`, we have been popped from
                 // the front of the lock queue and we now have exclusive access.
                 // Otherwise, return the `NotReady`. The rx (oneshot channel) will
@@ -527,23 +526,21 @@ impl<V, G> FutureGuard<V, G> where G: OrderGuard<V> {
                                 lock_event.set_complete().unwrap()
                             }
                     self.stage = Stage::Command;
+                    self.poll_command(cx)
                 },
-                Poll::Pending => return Ok(Poll::Pending)
+                Poll::Pending => {
+                    self.poll_command(cx)
+                }
                 // Err(e) => return Err(e.into()),
                 // Err(e) => panic!("FutureGuard::poll_lock: {:?}", e),
             }
-        } else {
-            unreachable!();
-        }
-
-        self.poll_command(cx)
     }
 
 
     /// Polls the lock until we have obtained a lock then polls the command
     /// event.
     #[cfg(feature = "async_block")]
-    fn poll_lock(&mut self, cx: &mut Context) -> OclResult<Poll<G>> {
+    fn poll_lock(&mut self, cx: &mut Context) -> Poll<G> {
         debug_assert!(self.stage == Stage::LockQueue);
         print_debug(self.order_lock.as_ref().unwrap().id(), "FutureGuard::poll_lock: Called");
 
@@ -560,34 +557,34 @@ impl<V, G> FutureGuard<V, G> where G: OrderGuard<V> {
         self.stage = Stage::Command;
         // if PRINT_DEBUG { println!("###### [{}] FutureGuard::poll_lock: Moving to command stage.",
         //     self.order_lock.as_ref().unwrap().id()); }
-        return self.poll_command(cx);
+        self.poll_command(cx)
     }
 
     /// Polls the command event until it is complete then returns an `OrderGuard`
     /// which can be safely accessed immediately.
-    fn poll_command(&mut self,cx: &mut Context) -> OclResult<Poll<G>> {
+    fn poll_command(&mut self,cx: &mut Context) -> Poll<G> {
         debug_assert!(self.stage == Stage::Command);
         print_debug(self.order_lock.as_ref().unwrap().id(), "FutureGuard::poll_command: Called");
 
-        if let Some(ref mut command_event) = self.command_event {
-            print_debug(self.order_lock.as_ref().unwrap().id(), "FutureGuard::poll_command: Event exists");
+        print_debug(self.order_lock.as_ref().unwrap().id(), "FutureGuard::poll_command: Event exists");
 
-            if let Poll::Pending = Pin::new(&mut command_event).poll(cx) {
+        match Pin::new(&mut self.command_event.take().unwrap()).poll(cx) {
+            Poll::Ready(_) => {
+                return Poll::Ready(self.into_guard());
+            },
+            Poll::Pending => {
                 print_debug(self.order_lock.as_ref().unwrap().id(), "FutureGuard::poll_command: Event not ready");
-                return Ok(Poll::Pending);
+                print_debug(self.order_lock.as_ref().unwrap().id(), "FutureGuard::poll_command: Event is ready");
+                // Set cmd event to `None` so it doesn't get waited on unnecessarily
+                // when this `FutureGuard` drops.
+                self.command_event = None;
+                if self.upgrade_after_command {
+                    self.stage = Stage::Upgrade;
+                    self.poll_upgrade(cx)
+                } else {
+                    return Poll::Ready(self.into_guard());
+                }
             }
-            print_debug(self.order_lock.as_ref().unwrap().id(), "FutureGuard::poll_command: Event is ready");
-        }
-
-        // Set cmd event to `None` so it doesn't get waited on unnecessarily
-        // when this `FutureGuard` drops.
-        self.command_event = None;
-
-        if self.upgrade_after_command {
-            self.stage = Stage::Upgrade;
-            self.poll_upgrade(cx)
-        } else {
-            Ok(Poll::Ready(self.into_guard()))
         }
     }
 
@@ -596,7 +593,7 @@ impl<V, G> FutureGuard<V, G> where G: OrderGuard<V> {
     /// Only used if `::upgrade_after_command` has been called.
     ///
     #[cfg(not(feature = "async_block"))]
-    fn poll_upgrade(&mut self, cx: &mut Context) -> OclResult<Poll<G>> {
+    fn poll_upgrade(&mut self, cx: &mut Context) -> Poll<G> {
         debug_assert!(self.stage == Stage::Upgrade);
         debug_assert!(self.upgrade_after_command);
         print_debug(self.order_lock.as_ref().unwrap().id(), "FutureGuard::poll_upgrade: Called");
@@ -606,28 +603,21 @@ impl<V, G> FutureGuard<V, G> where G: OrderGuard<V> {
                 Ok(_) => {
                     print_debug(self.order_lock.as_ref().unwrap().id(),
                         "FutureGuard::poll_upgrade: Write lock acquired. Upgrading immediately.");
-                    Ok(Poll::Ready(self.into_guard()))
+                    return Poll::Ready(self.into_guard());
                 },
                 Err(rx) => {
                     self.upgrade_rx = Some(rx);
                     match Pin::new(&mut self.upgrade_rx.as_mut().unwrap()).poll(cx) {
-                        res => {
-                            // print_debug(self.order_lock.as_ref().unwrap().id(),
-                            //     "FutureGuard::poll_upgrade: Channel completed. Upgrading.");
-                            // Ok(res.map(|_| self.into_guard()))
-                            match res {
-                                Poll::Ready(_) => {
+                                Poll::Ready(res) => {
                                     print_debug(self.order_lock.as_ref().unwrap().id(),
                                         "FutureGuard::poll_upgrade: Channel completed. Upgrading.");
-                                    Ok(Poll::Ready(self.into_guard()))
+                                    return Poll::Ready(self.into_guard());
                                 },
                                 Poll::Pending => {
                                     print_debug(self.order_lock.as_ref().unwrap().id(),
                                         "FutureGuard::poll_upgrade: Upgrade rx not ready.");
-                                    Ok(Poll::Pending)
+                                        return Poll::Pending;
                                 },
-                            }
-                        },
                         // Err(e) => Err(e.into()),
                         // Err(e) => panic!("FutureGuard::poll_upgrade: {:?}", e),
                    }
@@ -637,10 +627,13 @@ impl<V, G> FutureGuard<V, G> where G: OrderGuard<V> {
             // Check for completion of the upgrade rx:
             match Pin::new(&mut self.upgrade_rx.as_mut().unwrap()).poll(cx) {
                 Poll::Ready(status) => {
-                    print_debug(self.order_lock.as_ref().unwrap().id(),
+                        print_debug(self.order_lock.as_ref().unwrap().id(),
                         &format!("FutureGuard::poll_upgrade: Status: {:?}", status));
-                        Poll::Ready(status.map(|_| self.into_guard()).unwrap())
+                        return Poll::Ready(self.into_guard());
                 },
+                Poll::Pending => {
+                        return Poll::Pending;
+                }
                 // Err(e) => Err(e.into()),
                 // Err(e) => panic!("FutureGuard::poll_upgrade: {:?}", e),
             }
@@ -652,17 +645,19 @@ impl<V, G> FutureGuard<V, G> where G: OrderGuard<V> {
     /// Only used if `::upgrade_after_command` has been called.
     ///
     #[cfg(feature = "async_block")]
-    fn poll_upgrade(&mut self, cx: &mut Context) -> OclResult<Poll<G>> {
+    fn poll_upgrade(&mut self, cx: &mut Context) -> Poll<G> {
         debug_assert!(self.stage == Stage::Upgrade);
         debug_assert!(self.upgrade_after_command);
         print_debug(self.order_lock.as_ref().unwrap().id(), "FutureGuard::poll_upgrade: Called");
 
         match unsafe { self.order_lock.as_ref().unwrap().lock.upgrade_read_lock() } {
-            Ok(_) => Ok(Poll::Ready(self.into_guard())),
+            Ok(_) => return {
+                Poll::Ready(self.into_guard())
+            },
             Err(rx) => {
                 self.upgrade_rx = Some(rx);
                 self.upgrade_rx.take().unwrap().wait()?;
-                Ok(Poll::Ready(self.into_guard()))
+                return Poll::Ready(self.into_guard());
             }
         }
     }
@@ -674,22 +669,61 @@ impl<V, G> FutureGuard<V, G> where G: OrderGuard<V> {
     }
 }
 
+impl<V, G> Unpin for FutureGuard<V, G> where G: OrderGuard<V> {}
+
+
 impl<V, G> Future for FutureGuard<V, G> where G: OrderGuard<V> {
     type Output = G;
 
     #[inline]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        if self.order_lock.is_some() {
-            match self.stage {
-                Stage::WaitEvents => self.poll_wait_events(cx),
-                Stage::LockQueue => self.poll_lock(cx),
-                Stage::Command => self.poll_command(cx),
-                Stage::Upgrade => self.poll_upgrade(cx),
+        let this = &mut *self;
+        if this.order_lock.is_some() {
+            match this.stage {
+                Stage::WaitEvents => { 
+                    match this.poll_wait_events(cx){
+                    Poll::Ready(res) =>{
+                        return Poll::Ready(res);
+                    },
+                    Poll::Pending =>{
+                        return Poll::Pending;
+                    }
+                    }
+                },
+                Stage::LockQueue => {
+                    match this.poll_lock(cx) {
+                        Poll::Ready(res) =>{
+                            return Poll::Ready(res);
+                        },
+                        Poll::Pending =>{
+                            return Poll::Pending;
+                        }
+                    }
+                },
+                Stage::Command => {
+                    match this.poll_command(cx){
+                        Poll::Ready(res) =>{
+                            return Poll::Ready(res);
+                        },
+                        Poll::Pending =>{
+                            return Poll::Pending;
+                        }
+                    }
+                },
+                Stage::Upgrade => {
+                    match this.poll_upgrade(cx){
+                        Poll::Ready(res) =>{
+                            return Poll::Ready(res);
+                        },
+                        Poll::Pending =>{
+                            return Poll::Pending;
+                        }
+                    }
+                }
             }
+        } else {
+            panic!("FutureGuard::poll: Task already completed.")
         }
-        //  else {
-        //     Err("FutureGuard::poll: Task already completed.".into())
-        // }
     }
 }
 
