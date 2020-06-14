@@ -4,11 +4,10 @@ use std;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut, Range};
 use futures::executor::block_on;
-use futures::{prelude::*, pin_mut};
 use crate::core::{self, Error as OclCoreError, Result as OclCoreResult, OclPrm, Mem as MemCore,
     MemFlags, MemInfo, MemInfoResult, BufferRegion, MapFlags, AsMem, MemCmdRw, MemCmdAll,
     ClNullEventPtr};
-use crate::{Context, Queue, FutureMemMap, MemMap, Event, RwVec, ReadGuard, FutureReadGuard, FutureWriteGuard,
+use crate::{Context, Queue, FutureMemMap, MemMap, Event, RwVec, FutureReadGuard, FutureWriteGuard,
     SpatialDims};
 use crate::standard::{ClNullEventPtrEnum, ClWaitListPtrEnum, HostSlice};
 use crate::error::{Error as OclError, Result as OclResult};
@@ -888,19 +887,12 @@ impl<'c, 'd, T> BufferReadCmd<'c, 'd, T> where T: OclPrm {
                 enqueue_with_data(&mut slice[range])
             },
             ReadDst::RwVec(rw_vec) => {
-                let mut guard = block_on(async {
+                let guard = block_on(async {
                     loop {
                         return rw_vec.read().await;
                         }
                     });
-                
-                //  let mut guard_ptr =  unsafe { *guard.as_mut_ptr() };
-
-                 // let this = &mut *self;
-
-                // let mut guard = refcell_guard.borrow_mut();
-                
-                // let guard_ptr = &mut guard as *mut ReadGuard<Vec<T>>;
+                let mut guard = guard.clone();
 
                 enqueue_with_data(&mut guard.as_mut_slice()[range])
             },

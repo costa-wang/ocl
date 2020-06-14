@@ -7,7 +7,7 @@ use crate::core::{self, OclPrm, MemMap as MemMapCore,
     MemFlags, MapFlags, ClNullEventPtr};
 use crate::standard::{Event, EventList, Queue, Buffer, ClWaitListPtrEnum, ClNullEventPtrEnum};
 use crate::r#async::{OrderLock, FutureGuard, ReadGuard, WriteGuard};
-use crate::error::{Error as OclError, Result as OclResult};
+use crate::error::{Result as OclResult};
 
 
 #[must_use = "futures do nothing unless polled"]
@@ -33,7 +33,7 @@ impl<T: OclPrm> Future for FutureFlush<T> {
     #[inline]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         match Pin::new(&mut self.future_guard).poll(cx){
-            Poll::Ready(res) => {
+            Poll::Ready(_) => {
                 //return Poll::Ready(res.map(|res| res.map(|_write_guard| ())).unwrap());
                 return Poll::Ready(());
             }

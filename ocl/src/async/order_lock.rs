@@ -9,11 +9,10 @@
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::{pin::Pin, task::Context, task::Poll};
-use std::cell::RefCell;
 use futures::{Future};
 use futures::channel::oneshot::{self, Receiver};
 use crate::core::{ClContextPtr, ClNullEventPtr};
-use crate::error::{Error as OclError, Result as OclResult};
+use crate::error::{Result as OclResult};
 use crate::{Event, EventList};
 use crate::r#async::qutex::{QrwLock, QrwRequest, RequestKind};
 
@@ -610,7 +609,7 @@ impl<V, G> FutureGuard<V, G> where G: OrderGuard<V> {
                 Err(rx) => {
                     self.upgrade_rx = Some(rx);
                     match Pin::new(&mut self.upgrade_rx.as_mut().unwrap()).poll(cx) {
-                                Poll::Ready(res) => {
+                                Poll::Ready(_) => {
                                     print_debug(self.order_lock.as_ref().unwrap().id(),
                                         "FutureGuard::poll_upgrade: Channel completed. Upgrading.");
                                     return Poll::Ready(self.into_guard());
@@ -723,7 +722,7 @@ impl<V, G> Drop for FutureGuard<V, G> where G: OrderGuard<V> {
         if let Some(ref mut lock_rx) = self.lock_rx {
             lock_rx.close();
             match lock_rx.try_recv() {
-                Ok(status) => {
+                Ok(_) => {
                             if let Some(ref lock_event) = self.lock_event {
                                 lock_event.set_complete().ok();
                             }

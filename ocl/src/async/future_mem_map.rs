@@ -5,7 +5,7 @@ use std::{pin::Pin, task::Context, task::Poll};
 use futures::{Future};
 use crate::core::{OclPrm, MemMap as MemMapCore, Mem, ClNullEventPtr};
 use crate::r#async::MemMap;
-use crate::error::{Error as OclError, Result as OclResult};
+use crate::error::{Result as OclResult};
 use crate::{Event, Queue, EventList};
 
 
@@ -142,7 +142,7 @@ impl<T: OclPrm> FutureMemMap<T> {
 impl<T> Future for FutureMemMap<T> where T: OclPrm + 'static {
     type Output = MemMap<T>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(mut self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
         // println!("Polling FutureMemMap...");
         match self.map_event.is_complete() {
             Ok(true) => {

@@ -260,7 +260,7 @@ impl Future for Event {
     //   - TODO: Look into possible effects of unparking a task multiple times.
     //
     #[cfg(not(feature = "async_block"))]
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
         debug_assert!(self.0.is_valid());
 
         match self.is_complete().unwrap() {
@@ -597,7 +597,7 @@ impl Future for EventArray {
     type Output = ();
 
     /// Polls each event from this list.
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
         poll_events(self.as_slice())
     }
 }
@@ -1198,7 +1198,7 @@ impl Future for EventList {
     type Output = ();
 
     /// Polls each event from this list.
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
         poll_events(self.as_slice())
     }
 }
