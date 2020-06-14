@@ -19,8 +19,8 @@ pub mod concurrent;
 pub mod kernel_arg;
 pub mod vector_types;
 pub mod context_props;
-pub mod r#async;
-pub mod buffer_sink_stream_cycles;
+// pub mod r#async;
+// pub mod buffer_sink_stream_cycles;
 
 use self::rand::Rng;
 use crate::core::OclScl;

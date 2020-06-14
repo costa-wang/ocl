@@ -28,36 +28,14 @@ static SRC: &'static str = r#"
     }
 "#;
 
-fn info() -> OclResult<()> {
+ fn info() -> OclResult<()> {
     let dims = 2048;
-    let platforms = Platform::list();
-
-    println!("Looping through avaliable platforms ({}):", platforms.len());
-
     // Loop through all avaliable platforms:
-    for p_idx in 0..platforms.len() {
-        let platform = &platforms[p_idx];
 
-        let devices = Device::list_all(platform)?;
-
-        if devices.is_empty() { continue; }
-
-        // [NOTE]: A new context can also be created for each device if desired.
-        let context = Context::builder()
-            .platform(platform.clone())
-            .devices(&devices)
-            .build()?;
-
-        print_platform_info(&platform)?;
-
-        for device in devices.iter() {
-            print_device_info(device)?;
-        }
-
-        // Loop through each device
-        for d_idx in 0..devices.len() {
-            let device = devices[d_idx];
-
+    for (_p_idx, platform) in Platform::list().into_iter().enumerate() {
+        print_platform_info(&platform);
+        for (_d_idx, device) in Device::list_all(&platform)?.into_iter().enumerate() {
+            let context = Context::builder().platform(platform).devices(device).build()?;
             let queue = Queue::new(&context, device, Some(ocl::core::QUEUE_PROFILING_ENABLE))?;
             let buffer = Buffer::<f32>::builder()
                 .queue(queue.clone())
@@ -90,7 +68,7 @@ fn info() -> OclResult<()> {
             event.wait_for()?;
 
             // Print all but device (just once per platform):
-            if d_idx == 0 {
+                print_device_info(&device)?;
                 print_context_info(&context);
                 print_queue_info(&queue);
                 print_buffer_info(&buffer);
@@ -100,7 +78,7 @@ fn info() -> OclResult<()> {
                 print_kernel_info(&kernel);
                 print_event_list_info(&event_list);
                 print_event_info(&event);
-            }
+
         }
     }
     Ok(())
@@ -185,8 +163,9 @@ fn print_event_info(event: &Event) {
 
 
 pub fn main() {
-    match info() {
+    match info(){
         Ok(_) => (),
         Err(err) => println!("{}", err),
     }
 }
+
