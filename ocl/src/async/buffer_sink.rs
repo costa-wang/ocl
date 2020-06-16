@@ -302,7 +302,7 @@ impl<T: OclPrm> BufferSink<T> {
 
         let memory = core::enqueue_map_buffer::<T, _, _, _>(buffer.default_queue().unwrap(),
             buffer.as_core(), true, map_flags, default_offset, default_len, None::<&EventList>,
-                None::<&mut Event>)?;
+            None::<&mut Event>)?;
 
         let inner = Inner {
             buffer,

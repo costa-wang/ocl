@@ -842,6 +842,7 @@ impl<'c, 'd, T> BufferReadCmd<'c, 'd, T> where T: OclPrm {
     //
     // NOTE: Could use deferred initialization for the guard slice instead of closure.
     pub fn enq(mut self) -> OclResult<()> {
+        println!("BufferReadCmd::enq()");
         let read_dst = self.dst.take();
         let range = self.range.clone();
         if range.end > read_dst.len() { return Err(OclError::from(
@@ -884,27 +885,126 @@ impl<'c, 'd, T> BufferReadCmd<'c, 'd, T> where T: OclPrm {
 
         match read_dst {
             ReadDst::Slice(slice) => {
+                println!("ReadDst::Slice");
                 enqueue_with_data(&mut slice[range])
             },
             ReadDst::RwVec(rw_vec) => {
-                let guard = block_on(async {
-                    loop {
-                        return rw_vec.read().await;
-                        }
-                    });
-                let mut guard = guard.clone();
+                // let guard = block_on(async {
+                //         return rw_vec.write().await;
+                //     });
+                // let mut guard = guard.clone();
+                // enqueue_with_data(&mut guard.as_mut_slice()[range])
+                println!("ReadDst::RwVec");
+                let queue = match self.cmd.queue {
+                    Some(q) => q,
+                    None => return Err("BufferReadCmd::enq: No queue set.".into()),
+                };
 
-                enqueue_with_data(&mut guard.as_mut_slice()[range])
+                let mut writer = rw_vec.write();
+                let writer_len = unsafe { (*writer.as_ptr()).len() };
+                if self.range.end > writer_len {
+                    return Err(OclError::from("Unable to enqueue buffer read command: \
+                        Invalid src_offset and/or len."))
+                }
+
+                writer.create_lock_event(queue.context_ptr()?)?;
+
+                if let Some(wl) = self.cmd.ewait {
+                    writer.set_lock_wait_events(wl);
+                }
+
+                // let dst = unsafe { &mut writer.as_mut_slice().expect("BufferReadCmd::enq_async: \
+                //     Invalid writer.")[self.range] };
+                let dst = unsafe {
+                    &mut ::std::slice::from_raw_parts_mut(
+                        (*writer.as_mut_ptr()).as_mut_ptr(), writer_len)[self.range]
+                };
+
+                let mut read_event = Event::empty();
+
+                match self.cmd.shape {
+                    BufferCmdDataShape::Lin { offset } => {
+                        check_len(self.cmd.mem_len, dst.len(), offset)?;
+
+                        unsafe { core::enqueue_read_buffer(queue, &self.cmd.buffer.obj_core, false,
+                            offset, dst, writer.lock_event(), Some(&mut read_event))?; }
+                    },
+                    BufferCmdDataShape::Rect { src_origin, dst_origin, region,
+                        src_row_pitch_bytes, src_slc_pitch_bytes,
+                            dst_row_pitch_bytes, dst_slc_pitch_bytes } =>
+                    {
+                        unsafe { core::enqueue_read_buffer_rect(queue, &self.cmd.buffer.obj_core,
+                            false, src_origin, dst_origin, region, src_row_pitch_bytes,
+                            src_slc_pitch_bytes, dst_row_pitch_bytes, dst_slc_pitch_bytes,
+                            dst, writer.lock_event(), Some(&mut read_event))?; }
+                    }
+                }
+
+                if let Some(ref mut enew) = self.cmd.enew.take() {
+                    unsafe { enew.clone_from(&read_event) }
+                }
+
+                writer.set_command_wait_event(read_event);
+                Ok(())
             },
-            ReadDst::Writer(writer) => {
-                let mut guard = block_on(async {
-                    loop {
-                        return writer.await;
-                        }
-                    });
-                // let mut guard = refcell_guard.borrow_mut();
-                    //.map_err(|_| OclError::from("Unable to obtain lock."))?;
-                enqueue_with_data(&mut guard.as_mut_slice()[range])
+            ReadDst::Writer(mut writer) => {
+                println!("ReadDst::Writer");
+                // let mut guard = block_on(async {
+                //         return writer.await;
+                //     });
+                // // let mut guard = refcell_guard.borrow_mut();
+                //     //.map_err(|_| OclError::from("Unable to obtain lock."))?;
+                // enqueue_with_data(&mut guard.as_mut_slice()[range])
+                let queue = match self.cmd.queue {
+                    Some(q) => q,
+                    None => return Err("BufferReadCmd::enq: No queue set.".into()),
+                };
+
+                let writer_len = unsafe { (*writer.as_ptr()).len() };
+                if self.range.end > writer_len {
+                    return Err(OclError::from("Unable to enqueue buffer read command: \
+                        Invalid src_offset and/or len."))
+                }
+
+                writer.create_lock_event(queue.context_ptr()?)?;
+
+                if let Some(wl) = self.cmd.ewait {
+                    writer.set_lock_wait_events(wl);
+                }
+
+                // let dst = unsafe { &mut writer.as_mut_slice().expect("BufferReadCmd::enq_async: \
+                //     Invalid writer.")[self.range] };
+                let dst = unsafe {
+                    &mut ::std::slice::from_raw_parts_mut(
+                        (*writer.as_mut_ptr()).as_mut_ptr(), writer_len)[self.range]
+                };
+
+                let mut read_event = Event::empty();
+
+                match self.cmd.shape {
+                    BufferCmdDataShape::Lin { offset } => {
+                        check_len(self.cmd.mem_len, dst.len(), offset)?;
+
+                        unsafe { core::enqueue_read_buffer(queue, &self.cmd.buffer.obj_core, false,
+                            offset, dst, writer.lock_event(), Some(&mut read_event))?; }
+                    },
+                    BufferCmdDataShape::Rect { src_origin, dst_origin, region,
+                        src_row_pitch_bytes, src_slc_pitch_bytes,
+                            dst_row_pitch_bytes, dst_slc_pitch_bytes } =>
+                    {
+                        unsafe { core::enqueue_read_buffer_rect(queue, &self.cmd.buffer.obj_core,
+                            false, src_origin, dst_origin, region, src_row_pitch_bytes,
+                            src_slc_pitch_bytes, dst_row_pitch_bytes, dst_slc_pitch_bytes,
+                            dst, writer.lock_event(), Some(&mut read_event))?; }
+                    }
+                }
+
+                if let Some(ref mut enew) = self.cmd.enew.take() {
+                    unsafe { enew.clone_from(&read_event) }
+                }
+
+                writer.set_command_wait_event(read_event);
+                Ok(())
             }
             ReadDst::None => panic!("Invalid read destination."),
         }
@@ -1231,6 +1331,7 @@ impl<'c, 'd, T> BufferWriteCmd<'c, 'd, T> where T: OclPrm {
     //
     // NOTE: Could use deferred initialization for the guard slice instead of closure.
     pub fn enq(mut self) -> OclResult<()> {
+        println!("BufferWriteCmd::enq()");
         let write_src = self.src.take();
         let range = self.range.clone();
         if range.end > write_src.len() { return Err(OclError::from(
@@ -1270,32 +1371,131 @@ impl<'c, 'd, T> BufferWriteCmd<'c, 'd, T> where T: OclPrm {
                 },
                 _ => unreachable!(),
             }
-        };
+        };       
 
         match write_src {
             WriteSrc::Slice(slice) => {
+                println!("WriteSrc::Slice");
                 enqueue_with_data(&slice[range])
             },
             WriteSrc::RwVec(rw_vec) => {
-                let guard = block_on(async {
-                    loop {
-                         return rw_vec.read().await;
+            println!("WriteSrc::RwVec");
+            //     let guard = block_on(async {
+            //         return rw_vec.read().await;
+            //    });
+            //    // let guard = refcell_guard.borrow();
+            //    //.map_err(|_| OclError::from("Unable to obtain lock."))?;
+            //    enqueue_with_data(&guard.as_slice()[range])
+            
+            let queue = match self.cmd.queue {
+                Some(q) => q,
+                None => return Err("BufferCmd::enq: No queue set.".into()),
+            };
+            let mut reader = rw_vec.read();
+                 let reader_len = unsafe { (*reader.as_ptr()).len() };
+                if self.range.end > reader_len { return Err(OclError::from(
+                    "Unable to enqueue buffer write command: Invalid src_offset and/or len.")) }
+
+                if let Some(wl) = self.cmd.ewait {
+                    reader.set_lock_wait_events(wl);
+                }
+
+                reader.create_lock_event(queue.context_ptr()?)?;
+
+                let src = unsafe {
+                    &::std::slice::from_raw_parts((*reader.as_ptr()).as_ptr(), reader_len)[self.range]
+                };
+
+                let mut write_event = Event::empty();
+
+                match self.cmd.shape {
+                    BufferCmdDataShape::Lin { offset } => {
+                        check_len(self.cmd.mem_len, src.len(), offset)?;
+                        unsafe {
+                            core::enqueue_write_buffer(queue, &self.cmd.buffer.obj_core, false,
+                                offset, src, reader.lock_event(), Some(&mut write_event))?;
                         }
-                    });
-                // let guard = refcell_guard.borrow();
-                    //.map_err(|_| OclError::from("Unable to obtain lock."))?;
-                enqueue_with_data(&guard.as_slice()[range])
+                    },
+                    BufferCmdDataShape::Rect { src_origin, dst_origin, region,
+                            src_row_pitch_bytes, src_slc_pitch_bytes,
+                                dst_row_pitch_bytes, dst_slc_pitch_bytes } =>
+                    {
+                        unsafe {
+                            core::enqueue_write_buffer_rect(queue, &self.cmd.buffer.obj_core,
+                                false, src_origin, dst_origin, region, src_row_pitch_bytes,
+                                src_slc_pitch_bytes, dst_row_pitch_bytes, dst_slc_pitch_bytes,
+                                src, reader.lock_event(), Some(&mut write_event))?;
+                        }
+                    }
+                }
+
+                if let Some(ref mut enew) = self.cmd.enew.take() {
+                    unsafe { enew.clone_from(&write_event) }
+                }
+
+                reader.set_command_wait_event(write_event);
+                Ok(())
+                 
             },
-            WriteSrc::Reader(reader) => {
-                let guard = block_on(async {
-                    loop {
-                        return reader.await;
-                        }
-                    });
+            WriteSrc::Reader(mut reader) => {
+                // let guard = block_on(async {
+                //         return reader.await;
+                //     });
                 
-                // let guard = refcell_guard.borrow();
-                    //.map_err(|_| OclError::from("Unable to obtain lock."))?;
-                enqueue_with_data(&guard.as_slice()[range])
+                // // let guard = refcell_guard.borrow();
+                //     //.map_err(|_| OclError::from("Unable to obtain lock."))?;
+                // enqueue_with_data(&guard.as_slice()[range])
+                println!("WriteSrc::Reader");
+
+                let queue = match self.cmd.queue {
+                    Some(q) => q,
+                    None => return Err("BufferCmd::enq: No queue set.".into()),
+                };
+
+                let reader_len = unsafe { (*reader.as_ptr()).len() };
+                if self.range.end > reader_len { return Err(OclError::from(
+                    "Unable to enqueue buffer write command: Invalid src_offset and/or len.")) }
+
+                if let Some(wl) = self.cmd.ewait {
+                    reader.set_lock_wait_events(wl);
+                }
+
+
+                reader.create_lock_event(queue.context_ptr()?)?;
+
+                let src = unsafe {
+                    &::std::slice::from_raw_parts((*reader.as_ptr()).as_ptr(), reader_len)[self.range]
+                };
+
+                let mut write_event = Event::empty();
+
+                match self.cmd.shape {
+                    BufferCmdDataShape::Lin { offset } => {
+                        check_len(self.cmd.mem_len, src.len(), offset)?;
+                        unsafe {
+                            core::enqueue_write_buffer(queue, &self.cmd.buffer.obj_core, false,
+                                offset, src, reader.lock_event(), Some(&mut write_event))?;
+                        }
+                    },
+                    BufferCmdDataShape::Rect { src_origin, dst_origin, region,
+                            src_row_pitch_bytes, src_slc_pitch_bytes,
+                                dst_row_pitch_bytes, dst_slc_pitch_bytes } =>
+                    {
+                        unsafe {
+                            core::enqueue_write_buffer_rect(queue, &self.cmd.buffer.obj_core,
+                                false, src_origin, dst_origin, region, src_row_pitch_bytes,
+                                src_slc_pitch_bytes, dst_row_pitch_bytes, dst_slc_pitch_bytes,
+                                src, reader.lock_event(), Some(&mut write_event))?;
+                        }
+                    }
+                }
+
+                if let Some(ref mut enew) = self.cmd.enew.take() {
+                    unsafe { enew.clone_from(&write_event) }
+                }
+
+                reader.set_command_wait_event(write_event);
+                Ok(())
             },
             WriteSrc::None => panic!("Invalid read destination."),
         }

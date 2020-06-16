@@ -481,6 +481,10 @@ impl<V, G> FutureGuard<V, G> where G: OrderGuard<V> {
         self.order_lock.as_ref().expect("FutureGuard::order_lock: No OrderLock found.")
     }
 
+    // pub fn wait_events(&self) -> Option<EventList> {
+    //     self.wait_events
+    // }
+
     /// Polls the wait events until all requisite commands have completed then
     /// polls the lock queue.
     fn poll_wait_events(&mut self, cx: &mut Context) ->Poll<G> {
@@ -491,7 +495,6 @@ impl<V, G> FutureGuard<V, G> where G: OrderGuard<V> {
             // if PRINT_DEBUG { println!("###### [{}] FutureGuard::poll_wait_events: \
             //     Polling wait_events (thread: {})...", self.order_lock.as_ref().unwrap().id(),
             //     ::std::thread::current().name().unwrap_or("<unnamed>")); }
-
             match Pin::new(&mut self.wait_events.take().unwrap()).poll(cx) {
                 Poll::Ready(_) => {
                     return Poll::Ready(self.into_guard());
@@ -501,6 +504,21 @@ impl<V, G> FutureGuard<V, G> where G: OrderGuard<V> {
                     self.poll_lock(cx)
                 }
             }
+
+    //         loop {
+    //             if let Some(mut event_list) = self.wait_events.take(){
+    //             match Pin::new(&mut event_list).poll(cx) {
+    //             Poll::Ready(_) => {
+    //                 break Poll::Ready(self.into_guard())
+    //             },
+    //             Poll::Pending => {
+    //                 self.stage = Stage::LockQueue;
+    //                 break self.poll_lock(cx)
+    //             }
+    //         }
+    //     }
+    // }
+    
     }
 
     /// Polls the lock until we have obtained a lock then polls the command
@@ -667,6 +685,10 @@ impl<V, G> FutureGuard<V, G> where G: OrderGuard<V> {
     fn into_guard(&mut self) -> G {
         print_debug(self.order_lock.as_ref().unwrap().id(), "FutureGuard::into_guard: All polling complete");
         G::new(self.order_lock.take().unwrap(), self.release_event.take())
+    }
+
+    pub fn poll_guard(mut self, cx: &mut Context)-> Poll<G> {
+        Pin::new(&mut self).poll(cx)
     }
 }
 
